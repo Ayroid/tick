@@ -292,7 +292,7 @@ class TickStore extends ChangeNotifier {
       }
       if (apps.isEmpty) apps = await Native.apps();
       final start = today();
-      todayUsage = await Native.usage(start, clock());
+      todayUsage = (await Native.usage(start, clock())).onlyApps(apps.keys);
       if (grants.notifications) notifications = await Native.notifications();
       await _catchUpArchive();
     } catch (e) {
@@ -321,7 +321,10 @@ class TickStore extends ChangeNotifier {
     var wrote = false;
 
     while (!day.isAfter(yesterday)) {
-      final window = await Native.usage(day, endOfDay(day));
+      final window = (await Native.usage(
+        day,
+        endOfDay(day),
+      )).onlyApps(apps.keys);
       if (window.granted) {
         final totals = {
           for (final app in window.byPackage.values)

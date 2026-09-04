@@ -23,8 +23,8 @@ that budget is gone.
 
 ```sh
 flutter run                       # debug
-flutter test                      # 132 unit, widget, a11y and golden tests
-(cd android && ./gradlew :app:testDebugUnitTest)   # 11 Kotlin tests, no device
+flutter test                      # 135 unit, widget, a11y and golden tests
+(cd android && ./gradlew :app:testDebugUnitTest)   # 14 Kotlin tests, no device
 flutter test --update-goldens     # only when a pixel change is deliberate
 flutter analyze
 tool/release.sh                   # split-per-abi release APKs into releases/
@@ -81,12 +81,24 @@ in our own process would only ever be a less accurate copy that stops when we
 are killed. The one exception is `archive` — a daily total kept once the raw
 events have aged out, because `queryEvents` only goes back about a week.
 
-**Exactly one app is in front at a time, and `Usage.fold` is written that way.**
-It tracks one current package and the instant it came forward, not a map of
-open ones. Android fires `ACTIVITY_PAUSED` *and then* `ACTIVITY_STOPPED` for
-the same activity, and a map-based version double-counted the second — a
-launcher opened 345 times reported 5144 hours in one day. `fold` is a pure
-function over plain data so the JVM tests can hold that shape down.
+**A session ends when another app starts one, not when this one pauses.**
+Apps pause constantly for things nobody perceives as leaving the app — a system
+dialog, the shade, a sub-activity, a cancelled gesture. Ending on the pause
+threw away every gap: measured against Digital Wellbeing, WhatsApp lost 67 of
+its 97 minutes across 329 pause/resume cycles while apps with no churn matched
+to the minute. Screen-off events close a session; that is what stops a phone
+put down mid-app accruing time.
+
+`Usage.fold` tracks one current package and the instant it came forward, and is
+a pure function over plain data so the JVM tests can hold the shape down.
+Sessions are disjoint by construction, so no stream can total more than the
+window it covers — the first version violated that by four orders of magnitude.
+
+**Only launchable packages count as apps.** The event stream also carries the
+home screen and the surfaces you pass through — the package installer, the
+permission controller, the intent resolver. Digital Wellbeing lists none of
+them, and a screen-time app whose top result is the home screen is answering a
+question nobody asked.
 
 **Foreground time is summed from events, not from `queryUsageStats`.** Its
 `INTERVAL_DAILY` buckets are not aligned to local midnight and its

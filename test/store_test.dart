@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tick/clock.dart';
 import 'package:tick/store.dart';
+import 'package:tick/usage.dart';
 
 const _channel = MethodChannel('com.ayroid.tick/native');
 
@@ -456,6 +457,50 @@ void main() {
         isTrue,
       );
       expect(store.archive['2026-09-16'], {'com.social': 0});
+    });
+  });
+
+  group('what counts as an app', () {
+    // The event stream carries the home screen and the system surfaces you
+    // pass through. On a real day the launcher was the second heaviest row at
+    // 1h11 across 363 opens, and the package installer showed 105 opens.
+    // Digital Wellbeing lists none of them.
+    test('the launcher and system surfaces are dropped', () async {
+      mockNative(
+        usage: {
+          '2026-09-17': {
+            'com.social': 30 * 60000,
+            'com.nothing.launcher': 71 * 60000,
+            'com.google.android.packageinstaller': 4 * 60000,
+          },
+        },
+      );
+      final store = await loaded();
+      expect(store.todayUsage.byPackage.keys, ['com.social']);
+      expect(store.todayUsage.totalMs, 30 * 60000);
+    });
+
+    test('they are kept out of the archive too', () async {
+      mockNative(
+        usage: {
+          '2026-09-16': {
+            'com.social': 30 * 60000,
+            'com.nothing.launcher': 71 * 60000,
+          },
+        },
+      );
+      final store = await loaded();
+      expect(store.archive['2026-09-16']?.keys, ['com.social']);
+    });
+
+    test('an empty catalogue filters nothing, rather than everything', () {
+      // Before the catalogue loads there is nothing to check against, and
+      // blanking the screen would read as "you used your phone for 0 minutes".
+      const window = UsageWindow(
+        granted: true,
+        byPackage: {'com.social': AppUsage('com.social', 60000, 1)},
+      );
+      expect(window.onlyApps(const <String>[]).byPackage, hasLength(1));
     });
   });
 

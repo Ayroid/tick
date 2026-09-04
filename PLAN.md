@@ -214,6 +214,45 @@ passed against a mocked channel that returned well-formed windows, because the
 mock could not produce the event shape the bug needed — a PAUSED followed by a
 STOPPED. The fixture was written from how the stream was assumed to look.
 
+**9. A pause is not the end of a session, and the home screen is not an app.**
+
+The 21x fix got the arithmetic right and the model still wrong. Checked against
+Digital Wellbeing on a real day — 8h31 there, 8h08 in Tick — every app matched
+to the minute except two, and the two were the whole gap:
+
+| | Wellbeing | Tick | opens |
+|---|---|---|---|
+| WhatsApp | 1h37 | 30m | 329 |
+| Instagram | 55m | 37m | 76 |
+| Penny | 1h1 | 1h1 | 40 |
+| Clock | 50m | 50m | 12 |
+
+Ending a session on `ACTIVITY_PAUSED` throws away every gap between a pause and
+the next resume. Apps pause constantly for things nobody perceives as leaving
+the app — a system dialog, the shade, a sub-activity, a cancelled gesture — and
+the apps with that churn bled minutes while the ones without matched exactly.
+Penny with 40 clean launcher switches lost nothing; WhatsApp with 329 cycles
+lost 67 minutes.
+
+A session now runs until **another app comes to the front**, the screen goes
+off, or the window ends. Pauses are ignored. Screen-off handling
+(`SCREEN_NON_INTERACTIVE`, `KEYGUARD_SHOWN`, `DEVICE_SHUTDOWN`) is what stops a
+phone put down mid-app accruing time, and is the price of not ending on a
+pause.
+
+The second half: Wellbeing's 8h31 total is the sum of its app list, and the
+list has no home screen in it. Tick was reporting `com.nothing.launcher` as the
+second heaviest row at 1h11 across 363 opens, plus `packageinstaller` at 105
+opens, `permissioncontroller`, `intentresolver`. Usage for a package that has
+no launcher entry is now dropped — one rule, and it removes all of them. A
+screen-time app whose top result is the home screen is answering a question
+nobody asked.
+
+Sessions are disjoint by construction now — `since` only moves forward, to an
+event's own timestamp — so no stream can total more than the window it covers.
+That is a structural guarantee rather than a test, and it is exactly what the
+first version violated by four orders of magnitude.
+
 ### Smaller amendments
 
 - **`app_row.dart` was not in the plan.** The app-with-a-bar row is used on

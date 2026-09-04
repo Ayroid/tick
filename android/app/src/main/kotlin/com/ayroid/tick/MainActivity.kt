@@ -102,6 +102,12 @@ class MainActivity : FlutterActivity() {
      * The icons are PNG bytes, sent once and cached in Dart. That is a few
      * hundred KB across the channel on a cold start, which is why Dart asks
      * for this list once rather than per screen.
+     *
+     * Dart also treats this list as the definition of "an app": usage for a
+     * package that is not in it — the launcher, the package installer, the
+     * permission controller, the intent resolver — is dropped. Those are
+     * system surfaces you pass through, not things you spend time in, and
+     * Digital Wellbeing does not count them either.
      */
     private fun apps(): List<Map<String, Any>> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -109,7 +115,6 @@ class MainActivity : FlutterActivity() {
         return manager.queryIntentActivities(intent, 0)
             .mapNotNull { resolved ->
                 val info = resolved.activityInfo?.applicationInfo ?: return@mapNotNull null
-                if (info.packageName == packageName) return@mapNotNull null
                 mapOf(
                     "package" to info.packageName,
                     "label" to manager.getApplicationLabel(info).toString(),

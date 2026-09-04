@@ -102,6 +102,32 @@ class UsageWindow {
 
   int get totalOpens => byPackage.values.fold(0, (sum, app) => sum + app.opens);
 
+  /// Only the packages a person would call apps.
+  ///
+  /// The event stream also carries the home screen and the system surfaces you
+  /// pass through — the package installer, the permission controller, the
+  /// intent resolver. On one real day the launcher alone was the second
+  /// heaviest row at 1h11 across 363 opens, and the package installer showed
+  /// 105 opens. None of them appear in Digital Wellbeing, and a screen-time
+  /// app whose top result is the home screen is answering a question nobody
+  /// asked.
+  ///
+  /// An empty [known] means the catalogue has not loaded yet, and filtering
+  /// against it would blank the screen — so it is left alone.
+  UsageWindow onlyApps(Iterable<String> known) {
+    if (byPackage.isEmpty) return this;
+    final keep = known.toSet();
+    if (keep.isEmpty) return this;
+    return UsageWindow(
+      granted: granted,
+      unlocks: unlocks,
+      byPackage: {
+        for (final e in byPackage.entries)
+          if (keep.contains(e.key)) e.key: e.value,
+      },
+    );
+  }
+
   /// Longest first — the order every screen wants.
   List<AppUsage> get ranked {
     final list = byPackage.values.toList();

@@ -25,6 +25,7 @@ object Usage {
     const val RESUMED = 1
     const val PAUSED = 2
     const val UNLOCK = 3
+    const val SCREEN_OFF = 4
 
     /** One row of the system's event stream, reduced to what the sum needs. */
     data class Moment(val pkg: String, val type: Int, val at: Long)
@@ -38,24 +39,34 @@ object Usage {
      * Sum foreground time from an ordered event stream.
      *
      * Exactly one app is in front at a time, so this tracks a single current
-     * package and the instant it came forward, rather than a map of open
-     * packages. That is not a simplification — it is what makes the sum
-     * correct.
+     * package and the instant it came forward. A session runs from an app
+     * coming to the front until **another app comes to the front**, or the
+     * screen goes off, or the window ends.
      *
-     * The map version is how this was first written and it was wrong by four
-     * orders of magnitude. Android fires ACTIVITY_PAUSED *and then*
-     * ACTIVITY_STOPPED for the same activity. The PAUSED consumed the stored
-     * open-time, the STOPPED found nothing, fell through to "then it must have
-     * been open since the window began", and added the whole elapsed day —
-     * once per app switch. A launcher opened 345 times reported 5144 hours.
+     * A pause deliberately does NOT end a session. That is the whole
+     * difference between agreeing with Digital Wellbeing and not: apps pause
+     * constantly for things the user never perceives as leaving the app — a
+     * system dialog, the notification shade, a sub-activity, a navigation
+     * gesture that gets cancelled. Measured against Wellbeing on one real day,
+     * ending sessions on pause lost 67 of WhatsApp's 97 minutes across 329
+     * pause/resume cycles, and 18 of Instagram's 55 across 76, while apps with
+     * no such churn matched to the minute.
      *
-     * Two edges that genuinely do need handling:
+     * Sessions are disjoint by construction — `since` only ever moves forward,
+     * to an event's own timestamp — so the total can never exceed the window.
+     * That is a structural guarantee, not a test: an earlier version of this
+     * function summed a map of open packages and reported 17756 hours in a
+     * day, because Android fires ACTIVITY_PAUSED *and then* ACTIVITY_STOPPED
+     * for the same activity and both were treated as a close.
+     *
+     * Two edges that do need handling:
      *
      *  - An app was already in front when the window opened. It has no RESUMED
-     *    inside the window, so its first event is a PAUSED for a package
-     *    nothing is tracking: counted from [start], and only ever once.
-     *  - An app is still in front at [end] and has not paused yet. Its run is
-     *    closed at [end], not dropped, or today's top app always reads short.
+     *    inside the window, so its first event is a pause for a package
+     *    nothing is tracking: credited from [start], once, and then let go
+     *    rather than left current — there is no way to know what took over.
+     *  - An app is still in front at [end]. Its run is closed at [end], not
+     *    dropped, or today's top app always reads short.
      */
     fun fold(moments: List<Moment>, start: Long, end: Long): Window {
         val slices = HashMap<String, Slice>()
@@ -65,10 +76,8 @@ object Usage {
         var since = start
 
         // Whether anything has been attributed yet. Exactly one app can have
-        // been in front when the window opened, so the credit for that run is
-        // available exactly once, before the first RESUMED. Without this, a
-        // background activity stopping mid-window takes the same credit and
-        // is handed the whole elapsed day.
+        // been in front when the window opened, so that credit is available
+        // exactly once, before the first RESUMED.
         var primed = false
 
         fun add(pkg: String, from: Long, to: Long) {
@@ -79,9 +88,9 @@ object Usage {
         for (moment in moments) {
             when (moment.type) {
                 RESUMED -> {
-                    // The same activity resuming again is a configuration
-                    // change — a rotation, a theme switch — not the user
-                    // reaching for the app.
+                    // The same package resuming again is a sub-activity or a
+                    // configuration change — a rotation, a theme switch — not
+                    // the user reaching for the app, and not a new session.
                     if (current != moment.pkg) {
                         current?.let { add(it, since, moment.at) }
                         current = moment.pkg
@@ -92,16 +101,19 @@ object Usage {
                 }
 
                 PAUSED -> {
-                    if (moment.pkg == current) {
-                        add(moment.pkg, since, moment.at)
-                        current = null
-                        since = moment.at
-                    } else if (!primed && current == null) {
+                    if (!primed && current == null) {
                         // The app that was in front when the window opened.
                         add(moment.pkg, start, moment.at)
                     }
-                    // Anything else is a background activity stopping, or the
-                    // STOPPED that trails a PAUSED we already closed. Ignored.
+                    // Otherwise ignored. See the note above: a pause is not
+                    // the end of a session.
+                    primed = true
+                }
+
+                SCREEN_OFF -> {
+                    current?.let { add(it, since, moment.at) }
+                    current = null
+                    since = moment.at
                     primed = true
                 }
 
@@ -135,12 +147,16 @@ object Usage {
             val pkg = event.packageName ?: continue
             val type = when (event.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED -> RESUMED
-                // STOPPED trails PAUSED for the same activity; [fold] ignores
-                // the second of the pair. It is mapped rather than dropped so
-                // an activity that stops without pausing still closes.
                 UsageEvents.Event.ACTIVITY_PAUSED,
                 UsageEvents.Event.ACTIVITY_STOPPED -> PAUSED
                 UsageEvents.Event.KEYGUARD_HIDDEN -> UNLOCK
+                // What actually ends a session, along with another app
+                // starting one. Without these a phone put down mid-app would
+                // accrue time until the next thing was opened — the price of
+                // not ending on a pause.
+                UsageEvents.Event.SCREEN_NON_INTERACTIVE,
+                UsageEvents.Event.KEYGUARD_SHOWN,
+                UsageEvents.Event.DEVICE_SHUTDOWN -> SCREEN_OFF
                 else -> continue
             }
             moments.add(Moment(pkg, type, event.timeStamp))
