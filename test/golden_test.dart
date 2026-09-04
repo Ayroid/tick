@@ -63,6 +63,20 @@ Future<void> loadFonts() async {
   }
 }
 
+/// Let the mascot PNGs actually decode.
+///
+/// Under fake async an `Image.asset` never resolves, so every pose renders as
+/// its fallback and the goldens quietly record the drawn mark instead of the
+/// art. `precacheImage` does not help: `cacheHeight` wraps the provider in a
+/// `ResizeImage` with a different cache key, so the precached one is never the
+/// one looked up. Real elapsed time is the only thing that works.
+Future<void> settleImages(WidgetTester tester) async {
+  await tester.runAsync(
+    () => Future<void>.delayed(const Duration(milliseconds: 60)),
+  );
+  await tester.pumpAndSettle();
+}
+
 /// Mid-month, mid-morning on a Thursday. Every screen renders a date or a
 /// greeting, so without a pinned clock these images fail the next day.
 final _pinned = DateTime(2026, 9, 17, 10, 30);
@@ -122,6 +136,7 @@ Future<void> shot(
     ),
   );
   await tester.pumpAndSettle();
+  await settleImages(tester);
 
   await expectLater(
     find.byType(MaterialApp),
@@ -263,6 +278,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await settleImages(tester);
     await tester.tap(find.text('Social'));
     await tester.pumpAndSettle();
 

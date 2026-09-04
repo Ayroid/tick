@@ -86,14 +86,25 @@ class _AppState extends State<App> with WidgetsBindingObserver {
 /// What fills the gap between the system splash and the first real frame.
 ///
 /// The same mark on the same ground the system splash used, so the handoff is
-/// invisible rather than a flash of empty scaffold.
+/// invisible rather than a flash of empty scaffold. Falls back to the drawn
+/// clock, which is what runs before the art has been dropped in — and which
+/// also means this frame renders in a fresh checkout with no assets at all.
 class LaunchFrame extends StatelessWidget {
   const LaunchFrame({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: ClockMark(size: 128, semanticLabel: 'Tick')),
+    return Scaffold(
+      body: Center(
+        child: Image.asset(
+          'assets/splash/tick_mark.png',
+          height: 148,
+          fit: BoxFit.fitHeight,
+          semanticLabel: 'Tick',
+          errorBuilder: (context, _, _) =>
+              const ClockMark(size: 128, semanticLabel: 'Tick'),
+        ),
+      ),
     );
   }
 }

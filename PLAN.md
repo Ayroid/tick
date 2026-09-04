@@ -123,8 +123,9 @@ None of this can be exercised without hardware, and none of it was:
 
 ## Changes during the build
 
-Six things the plan got wrong, found by writing the tests and looking at the
-goldens. Recorded here rather than quietly edited above.
+Seven things the plan got wrong, found by writing the tests, looking at the
+goldens, and rendering the launcher mask. Recorded here rather than quietly
+edited above.
 
 **1. `onAccent` is not a constant here.** The plan said white, having measured
 only the light accent. Measured in both themes it flips: white on `#7C5CE6` is
@@ -164,6 +165,23 @@ outside it.
 morning. Everything date-shaped goes through `clock.dart`; this one had been
 missed, and a golden taken after 22:00 would have hidden it.
 
+**7. The adaptive icon cut the mascot's face off.** `tool/make_icon.py` came
+from Penny, which frames the launcher crop off its *width* and oversizes it
+past the 2/3 guarantee, then bottom-aligns to the canvas so the cut edge hides
+under the mask. That is right for a coin — a round mascot whose face sits in
+the middle of its own crop. Tick is wider than tall (1123×907 trimmed) with its
+face low in the crop, and the same rule put the eyes entirely below the
+launcher's circle. Driving off *height* instead and letting the width bleed
+past the box fixes it; the sides the mask clips are the body's own rounded
+edges and lose nothing.
+
+`ADAPTIVE_OVERSIZE` is gone, replaced by `ADAPTIVE_HEIGHT = 0.94` and
+`ADAPTIVE_TOP_PAD = 0.05`. Both were **tuned by eye against a rendered mask**,
+and had to be: at 1.00/0.00 the circle shaves the top corners off the bell, and
+past about 1.10 it takes the eyes. Every value in that range looked fine as
+arithmetic and wrong as a picture. Re-render the mask before trusting a new
+number.
+
 ### Smaller amendments
 
 - **`app_row.dart` was not in the plan.** The app-with-a-bar row is used on
@@ -184,6 +202,14 @@ missed, and a golden taken after 22:00 would have hidden it.
   time is dropped and today's top app always reads short.
 - **Notification counts land in the same native prefs file**, pruned to 31
   days — that file is rewritten on every notification the phone receives.
+- **`LaunchFrame` shows `assets/splash/tick_mark.png`**, not the drawn
+  `ClockMark` that Penny uses there. The mark is generated either way, and an
+  unused generated asset is weight with no reader. `ClockMark` stays as the
+  `errorBuilder`, so the frame still renders in a checkout with no art in it.
+- **`golden_test.dart` needed `settleImages`.** Under fake async an
+  `Image.asset` never resolves, so before the art existed every golden happily
+  recorded the fallback mark. `precacheImage` does not help — `cacheHeight`
+  wraps the provider in a `ResizeImage` with a different cache key.
 
 ## Ceilings deliberately accepted
 
@@ -199,9 +225,6 @@ missed, and a golden taken after 22:00 would have hidden it.
   Limits are freely editable by decision; a lock on the off switch would be
   incoherent.
 - **Notification counts start the day the listener is enabled.**
-- **`tool/make_icon.py`'s `ADAPTIVE_OVERSIZE` is Penny's**, tuned by eye for a
-  coin. Tick is a squatter shape; re-check it against a real launcher once the
-  art exists.
 - **The whole rules blob is re-encoded on every mutation.** Irrelevant at this
   size.
 

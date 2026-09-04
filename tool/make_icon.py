@@ -40,20 +40,26 @@ GROUND = (253, 248, 243, 255)
 # cropping it in the first place.
 ADAPTIVE_SAFE = 2 / 3
 
-# ...and then a little past it. The 2/3 guarantee is the floor Android
-# promises, not what a launcher actually shows — most mask a circle inscribed
-# in the full 108dp, so an icon framed to the guarantee looks small in every
-# real launcher. This oversizes by 10%, which puts the top of the art just
-# outside the guaranteed box. The trade is deliberate: a mask aggressive enough
-# to clip it would be clipping the corners off every other icon on the phone.
+# How the art sits inside that safe box: its height as a fraction of the box,
+# and how far its top is pushed down from the top of the box.
 #
-# Two 10% steps, tuned by looking at it rather than derived — 1.10 still read
-# small against the launcher's own icons.
+# Both TUNED BY EYE against a rendered circular mask, not derived — and they
+# had to be. Penny drives this off the art's width and oversizes it past the
+# guarantee, which is right for a coin: a round mascot whose face sits in the
+# middle of its own crop. Tick is wider than tall (1123x907 trimmed) and its
+# face sits low, so the same rule put the eyes below the mask entirely and left
+# the cut edge floating in the middle of the icon.
 #
-# ponytail: carried over from Penny's coin and NOT re-tuned for this art. Tick
-# is a squatter, wider shape than a coin-and-sprout, so re-check this against a
-# real launcher once the art exists and move it if the icon reads small.
-ADAPTIVE_OVERSIZE = 1.21
+# So this drives off HEIGHT and lets the width bleed past the box, where the
+# circle clips the body's own rounded sides and loses nothing. At 1.00/0.00 the
+# circle shaves the top corners off the bell; past ~1.10 it takes the eyes.
+# 0.94/0.05 is the window where the bell keeps its outline and both eyes stay
+# whole.
+#
+# Re-tune both if the art changes. Render the mask before trusting a number:
+# every one of these values looked fine as arithmetic and wrong as a picture.
+ADAPTIVE_HEIGHT = 0.94
+ADAPTIVE_TOP_PAD = 0.05
 
 
 def path(*parts):
@@ -120,22 +126,23 @@ def make_icons(size=1024):
     ios.convert("RGB").save(path("assets", "icon", "app_icon.png"), optimize=True)
 
     # Android adaptive: the foreground is 108dp, of which only the centre 72dp
-    # — two thirds — is guaranteed to survive the launcher's mask. So pin the
-    # art's top to the top of that safe box and let its bottom run to the
-    # canvas edge, where the mask crops it. That is the framing the crop was
-    # drawn for: a face rising into frame, with the cut edge hidden rather than
-    # floating mid-icon. Derived from the guarantee rather than tuned by eye.
+    # — two thirds — is guaranteed to survive the launcher's mask. Fit the art
+    # to the HEIGHT of that safe box and let its width run past, where the mask
+    # clips the body's own rounded sides and nothing is lost. Constraining the
+    # width instead leaves vertical slack, and the art's cut bottom edge then
+    # floats in the middle of the icon, which reads as a sticker torn in half.
     art = trimmed(source)
+    safe = size * ADAPTIVE_SAFE
     safe_top = size * (1 - ADAPTIVE_SAFE) / 2
-    scale = ADAPTIVE_OVERSIZE * min(
-        (size - safe_top) / art.height,  # tall art: bottom bleeds off
-        (size * ADAPTIVE_SAFE) / art.width,  # wide art: width is the limit
-    )
+    scale = safe * ADAPTIVE_HEIGHT / art.height
     art = art.resize(
         (round(art.width * scale), round(art.height * scale)), Image.LANCZOS
     )
     adaptive = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    adaptive.alpha_composite(art, ((size - art.width) // 2, size - art.height))
+    adaptive.alpha_composite(
+        art,
+        ((size - art.width) // 2, round(safe_top + safe * ADAPTIVE_TOP_PAD)),
+    )
     adaptive.save(path("assets", "icon", "app_icon_adaptive.png"), optimize=True)
     print("  app_icon.png + app_icon_adaptive.png")
 
