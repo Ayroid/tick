@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Only TYPE_WINDOW_STATE_CHANGED, and no ability to read window content.
+
+  An accessibility service can ask for a great deal; this one asks for the
+  minimum that answers "which app just came to the front". It does not set
+  canRetrieveWindowContent, so it cannot see anything inside the apps it
+  watches — which is worth being able to say out loud about a service that
+  sits between the user and every app on their phone.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:notificationTimeout="100"
+    android:description="@string/guard_description" />

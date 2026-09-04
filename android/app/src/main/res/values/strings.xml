@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tick</string>
+    <string name="guard_description">Lets Tick see which app has come to the front, so it can send you back to the home screen when that app has used up the time you gave it. Tick cannot read anything inside your apps.</string>
+</resources>
