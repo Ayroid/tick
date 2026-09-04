@@ -40,26 +40,20 @@ GROUND = (253, 248, 243, 255)
 # cropping it in the first place.
 ADAPTIVE_SAFE = 2 / 3
 
-# How the art sits inside that safe box: its height as a fraction of the box,
-# and how far its top is pushed down from the top of the box.
+# ...and then a little past it. The 2/3 guarantee is the floor Android
+# promises, not what a launcher actually shows — a launcher masks the WHOLE
+# 108dp layer, so an icon framed to the guarantee floats small in a sea of its
+# own background. This oversizes by 21%, which puts the top of the art just
+# outside the guaranteed box.
 #
-# Both TUNED BY EYE against a rendered circular mask, not derived — and they
-# had to be. Penny drives this off the art's width and oversizes it past the
-# guarantee, which is right for a coin: a round mascot whose face sits in the
-# middle of its own crop. Tick is wider than tall (1123x907 trimmed) and its
-# face sits low, so the same rule put the eyes below the mask entirely and left
-# the cut edge floating in the middle of the icon.
-#
-# So this drives off HEIGHT and lets the width bleed past the box, where the
-# circle clips the body's own rounded sides and loses nothing. At 1.00/0.00 the
-# circle shaves the top corners off the bell; past ~1.10 it takes the eyes.
-# 0.94/0.05 is the window where the bell keeps its outline and both eyes stay
-# whole.
-#
-# Re-tune both if the art changes. Render the mask before trusting a number:
-# every one of these values looked fine as arithmetic and wrong as a picture.
-ADAPTIVE_HEIGHT = 0.94
-ADAPTIVE_TOP_PAD = 0.05
+# Worth stating, because it is easy to get backwards and it is what makes the
+# art run off the bottom edge instead of stopping short of it: the 72dp safe
+# zone is where content is *guaranteed* to survive, not the region that is
+# displayed. Render a candidate against a mask inscribed in the full 108dp,
+# not in the safe box — masking the safe box instead makes every icon in this
+# family, Penny's and Wick's included, look decapitated, and invites a "fix"
+# that leaves a transparent gap under the mascot.
+ADAPTIVE_OVERSIZE = 1.21
 
 
 def path(*parts):
@@ -125,24 +119,23 @@ def make_icons(size=1024):
     ios.alpha_composite(source.resize((size, size), Image.LANCZOS))
     ios.convert("RGB").save(path("assets", "icon", "app_icon.png"), optimize=True)
 
-    # Android adaptive: the foreground is 108dp, of which only the centre 72dp
-    # — two thirds — is guaranteed to survive the launcher's mask. Fit the art
-    # to the HEIGHT of that safe box and let its width run past, where the mask
-    # clips the body's own rounded sides and nothing is lost. Constraining the
-    # width instead leaves vertical slack, and the art's cut bottom edge then
-    # floats in the middle of the icon, which reads as a sticker torn in half.
+    # Android adaptive: pin the art's top to the top of the safe box and let its
+    # bottom run to the canvas edge, where the mask crops it. That is the
+    # framing the crop was drawn for: a face rising into frame, with the cut
+    # edge hidden rather than floating mid-icon. There is deliberately NO
+    # bottom padding — Penny and Wick both have exactly zero, and a gap under
+    # the mascot is the tell that someone framed to the safe box by mistake.
     art = trimmed(source)
-    safe = size * ADAPTIVE_SAFE
     safe_top = size * (1 - ADAPTIVE_SAFE) / 2
-    scale = safe * ADAPTIVE_HEIGHT / art.height
+    scale = ADAPTIVE_OVERSIZE * min(
+        (size - safe_top) / art.height,  # tall art: bottom bleeds off
+        (size * ADAPTIVE_SAFE) / art.width,  # wide art: width is the limit
+    )
     art = art.resize(
         (round(art.width * scale), round(art.height * scale)), Image.LANCZOS
     )
     adaptive = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    adaptive.alpha_composite(
-        art,
-        ((size - art.width) // 2, round(safe_top + safe * ADAPTIVE_TOP_PAD)),
-    )
+    adaptive.alpha_composite(art, ((size - art.width) // 2, size - art.height))
     adaptive.save(path("assets", "icon", "app_icon_adaptive.png"), optimize=True)
     print("  app_icon.png + app_icon_adaptive.png")
 

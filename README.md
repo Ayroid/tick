@@ -33,6 +33,29 @@ Android only, and not by preference. iOS has no API that reports per-app usage
 or reacts to an app being opened without Apple's Screen Time entitlement, so
 half of this app cannot exist there.
 
+## Installing it
+
+Sideloading Tick trips two of Android's guards, both by design, and neither is
+a defect in the build. An accessibility service is the single most abused
+permission on Android, so a sideloaded app that declares one gets stopped
+twice.
+
+**1. Play Protect blocks the install** — *"App blocked to protect your device.
+This app can request access to sensitive data."* That is the accessibility
+service declaration being read off the manifest before anything runs. Tap
+**More details → Install anyway**. If the dialog offers only *Got it*, turn the
+scan off for the moment (Play Store → profile → Play Protect → settings →
+*Scan apps with Play Protect*), install, and turn it back on.
+
+**2. Enabling enforcement is a "restricted setting."** On Android 13 and later
+the accessibility toggle for a sideloaded app is greyed out until you allow it
+explicitly: **Settings → Apps → Tick → ⋮ → Allow restricted settings**. Then
+the switch under Settings → Accessibility → Tick works. Usage access is not
+restricted this way and can be granted straight from onboarding.
+
+Without step 2 Tick still shows every number — it just records limits without
+enforcing them, and the Limits screen says so rather than pretending.
+
 ## Layout
 
 `lib/` is flat, one file per screen or sheet, plus five that cut across:
@@ -126,12 +149,13 @@ pose falls back to `standing`, and `standing` falls back to `ClockMark`, a
 drawn clock. That fallback is why every screen in this repo renders in a
 checkout with no art in it at all.
 
-The launcher framing (`ADAPTIVE_HEIGHT`, `ADAPTIVE_TOP_PAD`) is **tuned by eye
-against a rendered mask**, not derived. Only the centre 72 of the 108dp canvas
-survives a launcher's mask, so the raw `app_icon_adaptive.png` has transparent
-padding around the art by design — what matters is what the mask leaves. Render
-it before changing either number: every value in the plausible range looks fine
-as arithmetic and either shaves the bell or eats the eyes as a picture.
+The adaptive foreground bottom-aligns to the canvas so the crop's cut edge runs
+off the bottom, where the mask hides it — **zero bottom padding**, same as Penny
+and Wick. A gap under the mascot means someone framed to the 72dp safe box by
+mistake. That box is where content is *guaranteed* to survive, not the region a
+launcher displays: launchers mask the whole 108dp layer. Render a candidate
+against a mask inscribed in the full canvas, and check it beside `../penny` and
+`../wick` before believing it.
 
 ## Design
 
