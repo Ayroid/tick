@@ -13,17 +13,105 @@ import android.os.Process
  * was first switched on, and a second counter running in our own process would
  * only ever be a less accurate copy that stops when we are killed.
  *
- * The one function here is called from two places — the method channel, to
- * draw the screens, and GuardService, to decide whether an app is over its
- * budget. There is exactly one implementation of "how long was this app in
- * front of you", which is the point.
+ * [fold] is called from two places — the method channel, to draw the screens,
+ * and GuardService, to decide whether an app is over its budget. There is
+ * exactly one implementation of "how long was this app in front of you".
  */
 object Usage {
+
+    // Our own event vocabulary rather than UsageEvents' constants, so [fold]
+    // is a pure function over data and can be tested without a device. The
+    // translation happens in one place, in [between].
+    const val RESUMED = 1
+    const val PAUSED = 2
+    const val UNLOCK = 3
+
+    /** One row of the system's event stream, reduced to what the sum needs. */
+    data class Moment(val pkg: String, val type: Int, val at: Long)
 
     /** One app's slice of a window of time. */
     data class Slice(var ms: Long = 0, var opens: Int = 0)
 
     data class Window(val byPackage: Map<String, Slice>, val unlocks: Int)
+
+    /**
+     * Sum foreground time from an ordered event stream.
+     *
+     * Exactly one app is in front at a time, so this tracks a single current
+     * package and the instant it came forward, rather than a map of open
+     * packages. That is not a simplification — it is what makes the sum
+     * correct.
+     *
+     * The map version is how this was first written and it was wrong by four
+     * orders of magnitude. Android fires ACTIVITY_PAUSED *and then*
+     * ACTIVITY_STOPPED for the same activity. The PAUSED consumed the stored
+     * open-time, the STOPPED found nothing, fell through to "then it must have
+     * been open since the window began", and added the whole elapsed day —
+     * once per app switch. A launcher opened 345 times reported 5144 hours.
+     *
+     * Two edges that genuinely do need handling:
+     *
+     *  - An app was already in front when the window opened. It has no RESUMED
+     *    inside the window, so its first event is a PAUSED for a package
+     *    nothing is tracking: counted from [start], and only ever once.
+     *  - An app is still in front at [end] and has not paused yet. Its run is
+     *    closed at [end], not dropped, or today's top app always reads short.
+     */
+    fun fold(moments: List<Moment>, start: Long, end: Long): Window {
+        val slices = HashMap<String, Slice>()
+        var unlocks = 0
+
+        var current: String? = null
+        var since = start
+
+        // Whether anything has been attributed yet. Exactly one app can have
+        // been in front when the window opened, so the credit for that run is
+        // available exactly once, before the first RESUMED. Without this, a
+        // background activity stopping mid-window takes the same credit and
+        // is handed the whole elapsed day.
+        var primed = false
+
+        fun add(pkg: String, from: Long, to: Long) {
+            val span = to - from
+            if (span > 0) slices.getOrPut(pkg) { Slice() }.ms += span
+        }
+
+        for (moment in moments) {
+            when (moment.type) {
+                RESUMED -> {
+                    // The same activity resuming again is a configuration
+                    // change — a rotation, a theme switch — not the user
+                    // reaching for the app.
+                    if (current != moment.pkg) {
+                        current?.let { add(it, since, moment.at) }
+                        current = moment.pkg
+                        since = moment.at
+                        slices.getOrPut(moment.pkg) { Slice() }.opens++
+                    }
+                    primed = true
+                }
+
+                PAUSED -> {
+                    if (moment.pkg == current) {
+                        add(moment.pkg, since, moment.at)
+                        current = null
+                        since = moment.at
+                    } else if (!primed && current == null) {
+                        // The app that was in front when the window opened.
+                        add(moment.pkg, start, moment.at)
+                    }
+                    // Anything else is a background activity stopping, or the
+                    // STOPPED that trails a PAUSED we already closed. Ignored.
+                    primed = true
+                }
+
+                UNLOCK -> unlocks++
+            }
+        }
+
+        current?.let { add(it, since, end) }
+        return Window(slices, unlocks)
+    }
 
     /**
      * Foreground milliseconds per package between [start] and [end].
@@ -34,54 +122,31 @@ object Usage {
      * RESUMED -> PAUSED pairs is what Digital Wellbeing's own numbers agree
      * with, and agreeing with the number already on the phone is the whole
      * credibility of this app.
-     *
-     * Two edges the pairing has to handle, both of which happen constantly:
-     *
-     *  - An app RESUMED before [start] and is still in front. There is no
-     *    opening event inside the window, so its time is counted from [start].
-     *    Handled by seeding `openedAt` on the first PAUSED we see for a
-     *    package we never saw open.
-     *  - An app is still in front at [end] and has not PAUSED yet. Its run is
-     *    closed at [end], not dropped, or today's top app always reads short.
      */
     fun between(context: Context, start: Long, end: Long): Window {
         val manager =
             context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val slices = HashMap<String, Slice>()
-        val openedAt = HashMap<String, Long>()
-        var unlocks = 0
+        val moments = ArrayList<Moment>()
 
         val events = manager.queryEvents(start, end)
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
             val pkg = event.packageName ?: continue
-            when (event.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    // Only count an open if it was not already open: a
-                    // configuration change resumes the same activity again and
-                    // is not the user reaching for the app.
-                    if (openedAt.put(pkg, event.timeStamp) == null) {
-                        slices.getOrPut(pkg) { Slice() }.opens++
-                    }
-                }
+            val type = when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED -> RESUMED
+                // STOPPED trails PAUSED for the same activity; [fold] ignores
+                // the second of the pair. It is mapped rather than dropped so
+                // an activity that stops without pausing still closes.
                 UsageEvents.Event.ACTIVITY_PAUSED,
-                UsageEvents.Event.ACTIVITY_STOPPED -> {
-                    val from = openedAt.remove(pkg) ?: start
-                    val span = event.timeStamp - from
-                    if (span > 0) slices.getOrPut(pkg) { Slice() }.ms += span
-                }
-                UsageEvents.Event.KEYGUARD_HIDDEN -> unlocks++
+                UsageEvents.Event.ACTIVITY_STOPPED -> PAUSED
+                UsageEvents.Event.KEYGUARD_HIDDEN -> UNLOCK
+                else -> continue
             }
+            moments.add(Moment(pkg, type, event.timeStamp))
         }
 
-        // Whatever is still in front when the window closes.
-        for ((pkg, from) in openedAt) {
-            val span = end - from
-            if (span > 0) slices.getOrPut(pkg) { Slice() }.ms += span
-        }
-
-        return Window(slices, unlocks)
+        return fold(moments, start, end)
     }
 
     /** Milliseconds [pkg] has been in front since local midnight. */

@@ -79,4 +79,9 @@ dependencies {
     // The Flutter embedding pulls androidx.core in transitively; naming it here
     // means the guard does not break the day that changes.
     implementation("androidx.core:core-ktx:1.13.1")
+
+    // Usage.fold is the sum the whole app rests on, and it is a pure function
+    // over plain data so it can be checked here rather than on a phone.
+    // Run with: (cd android && ./gradlew testDebugUnitTest)
+    testImplementation("junit:junit:4.13.2")
 }

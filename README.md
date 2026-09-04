@@ -24,6 +24,7 @@ that budget is gone.
 ```sh
 flutter run                       # debug
 flutter test                      # 132 unit, widget, a11y and golden tests
+(cd android && ./gradlew :app:testDebugUnitTest)   # 11 Kotlin tests, no device
 flutter test --update-goldens     # only when a pixel change is deliberate
 flutter analyze
 tool/release.sh                   # split-per-abi release APKs into releases/
@@ -79,6 +80,13 @@ foreground time since the phone was first switched on. A second counter running
 in our own process would only ever be a less accurate copy that stops when we
 are killed. The one exception is `archive` — a daily total kept once the raw
 events have aged out, because `queryEvents` only goes back about a week.
+
+**Exactly one app is in front at a time, and `Usage.fold` is written that way.**
+It tracks one current package and the instant it came forward, not a map of
+open ones. Android fires `ACTIVITY_PAUSED` *and then* `ACTIVITY_STOPPED` for
+the same activity, and a map-based version double-counted the second — a
+launcher opened 345 times reported 5144 hours in one day. `fold` is a pure
+function over plain data so the JVM tests can hold that shape down.
 
 **Foreground time is summed from events, not from `queryUsageStats`.** Its
 `INTERVAL_DAILY` buckets are not aligned to local midnight and its

@@ -182,6 +182,38 @@ past about 1.10 it takes the eyes. Every value in that range looked fine as
 arithmetic and wrong as a picture. Re-render the mask before trusting a new
 number.
 
+**8. The number the whole app exists to show was wrong by 21x.**
+
+Found on a real phone, on the first run: 17756 hours of screen time "today",
+with a launcher reporting 5144 hours across 345 opens.
+
+Android fires `ACTIVITY_PAUSED` and then `ACTIVITY_STOPPED` for the same
+activity, and `Usage.between` treated both as a close. The PAUSED consumed the
+stored open-time; the STOPPED found nothing, fell through to the "then it must
+have been open since the window began" fallback, and added the entire elapsed
+day — once per app switch.
+
+The fallback itself was right and is still there; what was wrong was letting
+every unmatched close take it. Exactly one app can have been in front when the
+window opened, so that credit is now available exactly once, before the first
+RESUMED.
+
+Rewritten as a single-foreground fold — one current package and the instant it
+came forward — because only one app is ever in front. That is not a
+simplification of the map version, it is the thing that makes the sum correct.
+
+`Usage.fold` is now a pure function over a list of plain `Moment`s, with
+`between` doing nothing but translating the system cursor into them. That buys
+11 JUnit tests that run on the JVM with no device
+(`cd android && ./gradlew :app:testDebugUnitTest`), including the one that
+matters: a day of switching can never total more than the day. The old
+algorithm fails it by 21x.
+
+**This is the cost of the manual script going unrun.** Every automated test
+passed against a mocked channel that returned well-formed windows, because the
+mock could not produce the event shape the bug needed — a PAUSED followed by a
+STOPPED. The fixture was written from how the stream was assumed to look.
+
 ### Smaller amendments
 
 - **`app_row.dart` was not in the plan.** The app-with-a-bar row is used on
