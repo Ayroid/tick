@@ -204,7 +204,21 @@ const _rulesKey = 'rules';
 const _archiveKey = 'archive';
 const _themeKey = 'themeMode';
 const _onboardedKey = 'onboarded';
-const _archivedKey = 'lastArchived';
+const _archiveVersionKey = 'archiveVersion';
+
+/// Bumped whenever the sum in `Usage.fold` changes meaning.
+///
+/// The archive is the one place a wrong answer outlives the code that produced
+/// it. Today is read live and self-corrects the moment the algorithm does;
+/// finished days are frozen the way they were first computed, so a release
+/// that fixes the arithmetic leaves every archived day still wrong.
+///
+/// Version 1 shipped a sum that reported 17756 hours in a day, and then one
+/// that lost every gap between a pause and a resume. Anything it wrote is
+/// discarded rather than migrated — the events to recompute it are usually
+/// still there, and where they are not, no history at all beats history that
+/// is confidently wrong.
+const _archiveVersion = 2;
 
 /// A day under this is not worth a row in the archive. Below a minute an app
 /// was glanced at, not used, and keeping every one of them would triple the
@@ -234,7 +248,11 @@ class TickStore extends ChangeNotifier {
 
   ThemeMode themeMode = ThemeMode.light;
   bool onboarded = false;
-  String lastArchived = '';
+
+  /// The day the re-derivable window was last rebuilt, so it happens once per
+  /// launch rather than on every resume — and again on its own if the app is
+  /// left open across midnight.
+  String _caughtUpOn = '';
 
   // Live. Re-read on every resume, never persisted.
   bool loaded = false;
@@ -248,7 +266,6 @@ class TickStore extends ChangeNotifier {
     themeMode = ThemeMode
         .values[(prefs.getInt(_themeKey) ?? ThemeMode.light.index).clamp(0, 2)];
     onboarded = prefs.getBool(_onboardedKey) ?? false;
-    lastArchived = prefs.getString(_archivedKey) ?? '';
 
     final rules = prefs.getString(_rulesKey);
     if (rules != null) {
@@ -262,7 +279,12 @@ class TickStore extends ChangeNotifier {
     }
 
     final stored = prefs.getString(_archiveKey);
-    if (stored != null) {
+    if ((prefs.getInt(_archiveVersionKey) ?? 1) != _archiveVersion) {
+      // Written by a version of the sum that has since been corrected.
+      debugPrint('archive: discarding history from an older sum');
+      await prefs.remove(_archiveKey);
+      await prefs.setInt(_archiveVersionKey, _archiveVersion);
+    } else if (stored != null) {
       try {
         _adoptArchive(_decodeArchive(stored));
       } catch (e) {
@@ -303,21 +325,29 @@ class TickStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Fold every completed day since the last catch-up into [archive].
+  /// Rebuild every finished day the system can still account for.
   ///
-  /// The raw event stream only goes back about a week, so a total that is not
-  /// captured within that window is gone for good. Today is deliberately
-  /// excluded — it is not finished, and reading it live is both cheaper and
-  /// always right.
+  /// Deliberately *re*-derived rather than accumulated. The raw event stream
+  /// goes back about a week, so for that window the system is still the source
+  /// of truth and Tick's copy is just a cache — one that has already been
+  /// wrong twice. Recomputing it means a fix to the sum repairs the recent
+  /// past instead of only the future, and it costs ten channel calls once per
+  /// launch.
+  ///
+  /// Days older than the window keep whatever they were given. They cannot be
+  /// checked, so they are neither corrected nor thrown away.
+  ///
+  /// Today is excluded: it is not finished, and reading it live is both
+  /// cheaper and always right.
+  ///
+  /// ponytail: ten queries of a day of events each, on launch. Track the last
+  /// rebuilt day and re-derive only the tail if it shows up in cold start.
   Future<void> _catchUpArchive() async {
-    final yesterday = shiftDays(today(), -1);
-    final from = lastArchived.isEmpty
-        ? shiftDays(yesterday, -_catchUpDays)
-        : shiftDays(parseDay(lastArchived), 1);
+    final stamp = dayKey(today());
+    if (_caughtUpOn == stamp) return;
 
-    var day = from.isBefore(shiftDays(yesterday, -_catchUpDays))
-        ? shiftDays(yesterday, -_catchUpDays)
-        : from;
+    final yesterday = shiftDays(today(), -1);
+    var day = shiftDays(yesterday, -(_catchUpDays - 1));
     var wrote = false;
 
     while (!day.isAfter(yesterday)) {
@@ -330,18 +360,25 @@ class TickStore extends ChangeNotifier {
           for (final app in window.byPackage.values)
             if (app.ms >= _archiveFloor) app.package: app.ms,
         };
-        if (totals.isNotEmpty) archive[dayKey(day)] = totals;
-        lastArchived = dayKey(day);
+        // An empty result replaces whatever was there. A day the system has no
+        // events for genuinely had no usage Tick can vouch for, and leaving a
+        // stale total in its place is how the old numbers survived a fix.
+        if (totals.isEmpty) {
+          archive.remove(dayKey(day));
+        } else {
+          archive[dayKey(day)] = totals;
+        }
         wrote = true;
       }
       day = shiftDays(day, 1);
     }
 
     if (wrote) {
+      _caughtUpOn = stamp;
       _prune();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_archiveKey, jsonEncode(archive));
-      await prefs.setString(_archivedKey, lastArchived);
+      await prefs.setInt(_archiveVersionKey, _archiveVersion);
     }
   }
 

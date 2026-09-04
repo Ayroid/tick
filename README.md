@@ -23,7 +23,7 @@ that budget is gone.
 
 ```sh
 flutter run                       # debug
-flutter test                      # 135 unit, widget, a11y and golden tests
+flutter test                      # 137 unit, widget, a11y and golden tests
 (cd android && ./gradlew :app:testDebugUnitTest)   # 14 Kotlin tests, no device
 flutter test --update-goldens     # only when a pixel change is deliberate
 flutter analyze
@@ -118,6 +118,14 @@ JSON into a native `SharedPreferences` file, because by the time an app is
 coming to the front there is usually no Flutter engine alive to ask. Not the
 plugin's `FlutterSharedPreferences` file — that is someone else's format, and
 it is migrating to DataStore.
+
+**The archive is re-derived, not accumulated.** For the week or so the event
+stream reaches back, the system is still the source of truth and Tick's copy is
+a cache — one that has been wrong twice. Rebuilding it on each launch means a
+fix to the sum repairs the recent past instead of only the future. Days beyond
+that window carry an `archiveVersion` stamp instead: bump it when the sum
+changes meaning and they are discarded, because no history beats history that
+is confidently wrong.
 
 **Days are `'YYYY-MM-DD'` strings and day arithmetic goes through the
 `DateTime` constructor.** A `Duration` is 24 real hours and lands on the wrong

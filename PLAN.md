@@ -253,6 +253,30 @@ event's own timestamp — so no stream can total more than the window it covers.
 That is a structural guarantee rather than a test, and it is exactly what the
 first version violated by four orders of magnitude.
 
+**10. Two fixes to the sum, and the history stayed wrong anyway.**
+
+Insights still showed nonsense after both. Today reads live and corrected
+itself the moment the arithmetic did; the archive did not. It had been written
+on the first launch of 0.1.0 by the sum that reported 17756 hours in a day, and
+`lastArchived` existed precisely to never revisit a day already stored. Every
+week and month rollup merged those rows.
+
+The archive was the wrong shape. For the week or so the raw event stream
+reaches back, the system is still the source of truth and Tick's copy is only a
+cache — so it is now **re-derived** on each launch rather than accumulated. A
+fix to the sum repairs the recent past instead of only the future, an empty
+result replaces a stale total rather than leaving it, and `lastArchived` is
+gone.
+
+Days beyond the event horizon cannot be checked, so they get an
+`archiveVersion` stamp instead: bumped when the sum changes meaning, and
+anything older is discarded rather than migrated. No history at all beats
+history that is confidently wrong.
+
+The general shape, worth remembering: **a derived value that outlives the code
+that derived it needs either a way to be recomputed or a version stamp.** This
+one had neither, so two correct fixes shipped and the app still lied.
+
 ### Smaller amendments
 
 - **`app_row.dart` was not in the plan.** The app-with-a-bar row is used on

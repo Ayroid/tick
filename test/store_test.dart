@@ -362,7 +362,6 @@ void main() {
       expect(store.archive['2026-09-16'], {'com.mail': 5 * 60000});
       // Today is never archived — it is not finished, and it reads live.
       expect(store.archive.containsKey('2026-09-17'), isFalse);
-      expect(store.lastArchived, '2026-09-16');
     });
 
     test('a glance is not worth a row', () async {
@@ -375,22 +374,58 @@ void main() {
       expect(store.archive['2026-09-16'], {'com.mail': 61 * 1000});
     });
 
-    test('a second launch on the same day does not redo the work', () async {
-      mockNative(
-        usage: {
-          '2026-09-16': {'com.mail': 5 * 60000},
-        },
-      );
-      await loaded();
+    // The archive is a cache of something the system can still be asked
+    // about, and it has been wrong twice. Re-deriving means a fix to the sum
+    // repairs the recent past rather than only the future.
+    test(
+      'a relaunch rebuilds the window rather than trusting itself',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'archiveVersion': 2,
+          'archive': jsonEncode({
+            '2026-09-16': {'com.social': 9999 * 60000},
+          }),
+        });
+        mockNative(
+          usage: {
+            '2026-09-16': {'com.social': 5 * 60000},
+          },
+        );
+        final store = await loaded();
+        expect(store.archive['2026-09-16'], {'com.social': 5 * 60000});
+      },
+    );
 
-      calls.clear();
-      await loaded();
-      final windows = calls
-          .where((c) => c.method == 'usage')
-          .map((c) => c.arguments['start'] as int)
-          .toList();
-      // Only today's live read; every finished day is already in.
-      expect(windows, [DateTime(2026, 9, 17).millisecondsSinceEpoch]);
+    test(
+      'a day the system no longer vouches for is dropped, not kept',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'archiveVersion': 2,
+          'archive': jsonEncode({
+            '2026-09-16': {'com.social': 30 * 60000},
+          }),
+        });
+        mockNative();
+        final store = await loaded();
+        expect(store.archive.containsKey('2026-09-16'), isFalse);
+      },
+    );
+
+    // Every archived day older than the event horizon was computed by whatever
+    // the sum looked like that week. There is no migrating a wrong total.
+    test('history from an older sum is discarded on upgrade', () async {
+      SharedPreferences.setMockInitialValues({
+        'archive': jsonEncode({
+          // Beyond the re-derivable window, so nothing can recompute it.
+          '2026-01-04': {'com.social': 17756 * 60 * 60000},
+        }),
+      });
+      mockNative();
+      final store = await loaded();
+      expect(store.archive, isEmpty);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt('archiveVersion'), 2);
     });
 
     test(
@@ -400,7 +435,6 @@ void main() {
         final store = await loaded();
         expect(store.todayUsage.granted, isFalse);
         expect(store.archive, isEmpty);
-        expect(store.lastArchived, '');
       },
     );
   });
