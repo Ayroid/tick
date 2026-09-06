@@ -40,7 +40,9 @@ android {
     signingConfigs {
         create("release") {
             keystoreProperties.getProperty("storeFile")?.let {
-                storeFile = file(it)
+                // Relative to android/, where key.properties and the keystore
+                // both live — `file()` alone would look inside android/app/.
+                storeFile = rootProject.file(it)
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
